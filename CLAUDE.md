@@ -26,6 +26,7 @@ Tài liệu này là quy tắc làm việc bắt buộc dành cho Claude khi h�
 | Input | Input System 1.19.0, **chỉ dùng Input System mới** (`activeInputHandler: 1`). Không dùng `UnityEngine.Input`. |
 | UI | uGUI (`com.unity.ugui`), Canvas Screen Space Overlay, CanvasScaler 1080x1920 chế độ Expand |
 | Text | `UnityEngine.UI.Text` + font Nunito-Black. Chưa dùng TextMeshPro. |
+| Ngôn ngữ | Song ngữ **Tiếng Việt (mặc định) / English**, nút VI/EN phía trên điểm số. Mọi chữ hiển thị lấy qua `Localization.T(key)`, không viết cứng chữ trong UI. |
 | Công cụ phát triển | `com.coplaydev.unity-mcp` (MCP for Unity) để Claude điều khiển Unity Editor |
 
 Không thêm package khác khi chưa được người dùng cho phép (xem mục 8.3).
@@ -36,20 +37,23 @@ Magic Block giữ gameplay xếp block lên bảng, xóa hàng ngang/cột dọc
 
 1. **End Turn:** Người chơi chủ động kết thúc lượt. Các block chưa sử dụng được chuyển vào Storage.
 2. **Limited Storage:** Storage có số slot giới hạn. Người chơi phải cân nhắc block nào nên giữ lại.
-3. **Buff System:** Sau một số turn nhất định, người chơi được chọn buff. Buff gồm loại dùng một lần và loại duy trì đến khi Game Over.
+3. **Buff System:** Buff vĩnh viễn có 4 độ hiếm (Common, Uncommon, Rare, Legendary), chọn ở các mốc màn. Buff dùng một lần chỉ nhận ngẫu nhiên khi qua màn thử thách.
+4. **Lượt chính và màn (kiểu TFT, hiển thị `lượt - màn`, ví dụ `1 - 7`):** mỗi lượt chính có 10 màn, màn 10 là màn thử thách có debuff.
+
+> **Đã chốt (thay cho GDD):** người dùng đã đổi cấu trúc chơi và cách tính điểm so với GDD gốc. Game vẫn chơi vô hạn, không có chiến thắng, chỉ kết thúc khi thua. Phần dưới đây là phiên bản mới nhất.
 
 ### 1.4. Vòng lặp gameplay
 
-1. Nhận một nhóm 3 block mới.
-2. Đặt block lên bảng chơi hoặc lấy block từ Storage để sử dụng.
-3. Khi một hàng ngang hoặc cột dọc được lấp đầy, hàng/cột đó bị xóa và người chơi nhận điểm.
-4. Người chơi có thể End Turn để đưa các block chưa sử dụng vào Storage.
-5. Hệ thống kiểm tra mốc nhận buff; nếu đủ điều kiện, người chơi chọn một buff.
-6. Bắt đầu lượt tiếp theo và tiếp tục cho đến khi không còn nước đi hợp lệ.
+1. Mỗi **màn** nhận một nhóm block mới: 3 block ở màn thường, **5 block** ở màn thử thách.
+2. Đặt block lên bảng hoặc lấy block từ Storage để dùng. Đầy hàng/cột thì xóa và ghi điểm.
+3. Màn kết thúc khi dùng hết block trên tay hoặc khi End Turn (block dư vào Storage).
+4. Xong **màn 5**: chọn 1 trong 3 buff vĩnh viễn.
+5. **Màn 10 (thử thách):** có 1 debuff ngẫu nhiên. Xong màn 10: nhận 1 buff dùng-một-lần ngẫu nhiên → chọn 1 trong 3 buff vĩnh viễn → dọn sạch Storage (giữ số slot) → sang lượt chính kế tiếp (`2 - 1`), lặp lại.
+6. Bảng không reset giữa các màn/lượt. Thua khi không còn nước đi hợp lệ.
 
 ### 1.5. Trạng thái hiện tại
 
-Đã có bản prototype chạy được trong Unity: core gameplay, End Turn + Storage, Buff (chọn buff, 4 consumable, 5 permanent), Game Over, High Score. Nhiều thông số và luật trong bản này do Claude **tạm chọn** khi triển khai, người dùng **chưa chốt** — xem mục 2.3.
+Đã có bản chạy được trong Unity: core gameplay, End Turn + Storage, lượt chính/màn + màn thử thách + 5 debuff, Buff (4 consumable, 10 permanent theo độ hiếm, May mắn), điểm mới, Game Over, High Score, song ngữ VI/EN. Danh sách buff, độ hiếm, tỉ lệ và debuff là bản **tạm** do Claude đề xuất, người dùng đã duyệt để dùng trước và **sẽ chỉnh sau** — xem mục 2.3.
 
 ---
 
@@ -85,18 +89,21 @@ GDD chưa xác định đầy đủ các luật dưới đây. Bản prototype h
 | # | Điểm cần làm rõ | Đang triển khai (tạm) | Chỗ chỉnh |
 |---|---|---|---|
 | 1 | Kích thước bảng chơi | 8x8 | `GameManager.boardSize` |
-| 2 | Quy tắc End Turn | Bấm được bất cứ lúc nào khi trên tay còn ít nhất 1 block chưa dùng | `GameManager.CanEndTurn` |
+| 2 | Quy tắc End Turn | Bấm được khi trên tay còn ít nhất 1 block chưa dùng (trừ khi debuff Không Lùi Bước) | `GameManager.CanEndTurn` |
 | 3 | Storage không đủ chỗ | Không được End Turn (nút bị khóa, có dòng nhắc). Không có chọn block để cất hay bỏ block | `GameManager.CanEndTurn` |
-| 4 | Dùng block trong Storage | Dùng bất cứ lúc nào, song song với 3 block trên tay, không giới hạn số block lấy ra mỗi turn | `GameManager.TryPlace` |
-| 5 | Thứ tự xử lý lượt | Lấy block từ Storage không ảnh hưởng 3 block trên tay. Turn kết thúc khi dùng hết 3 block trên tay hoặc khi End Turn | `GameManager.CompleteTurn` |
-| 6 | Điều kiện nhận buff | Mỗi 5 turn hoàn thành (`TurnsCompleted % 5 == 0`). Turn được tính khi dùng hết 3 block hoặc End Turn | `GameManager.turnsPerBuff` |
-| 7 | Lựa chọn buff | Chọn 1 trong 3 buff, rút ngẫu nhiên đều, không trùng nhau, từ cả 9 buff | `GameManager.buffChoices`, `OfferBuffChoice` |
+| 4 | Dùng block trong Storage | Dùng bất cứ lúc nào, song song với block trên tay, không giới hạn (trừ khi debuff Khóa Kho) | `GameManager.TryPlace` |
+| 5 | Màn (stage) | **Đã chốt:** màn = một nhóm block; xong khi dùng hết block trên tay hoặc End Turn. 3 block/màn thường, 5 block/màn thử thách | `GameManager.CompleteStage`, `handSize`, `challengeHandSize` |
+| 6 | Lượt chính & mốc buff | **Đã chốt:** 10 màn/lượt; xong màn 5 và màn 10 được chọn buff vĩnh viễn; xong màn 10 thưởng 1 consumable ngẫu nhiên + dọn Storage (giữ số slot). Hiển thị `lượt - màn` | `RunProgress`, `GameManager.stagesPerRound`, `buffStage` |
+| 7 | Lựa chọn buff | Chọn 1 trong 3 buff vĩnh viễn; mỗi thẻ quay độ hiếm riêng theo May mắn rồi chọn ngẫu nhiên trong độ hiếm đó, không trùng. Consumable không xuất hiện ở bảng chọn (**đã chốt**) | `BuffState.RollPermanentOptions` |
 | 8 | Tích trữ Consumable | Không giới hạn số lượng | `GameManager.Buffs.cs` |
-| 9 | Permanent trùng lặp | Được chọn lại và cộng dồn | `BuffDefinitions.cs` |
-| 10 | Điểm số | Xem mục 3.7 | `GameManager.CalculatePoints` |
+| 9 | Permanent trùng lặp | Được chọn lại và cộng dồn | `BuffState` |
+| 10 | Điểm số | **Đã chốt** công thức (xem 3.7) | `ScoreRules.LinePoints` |
 | 11 | Block generation | 16 hình gốc kèm các hướng xoay, random theo trọng số; màu random 7 màu. Xem mục 3.1 | `ShapeLibrary.cs` |
-| 12 | Game Over | Thua khi: không block nào (trên tay + Storage) đặt được **và** không End Turn được **và** không đang chọn buff **và** không còn consumable buff | `GameManager.Evaluate` |
-| 13 | Lưu tiến trình | Chỉ lưu High Score (`PlayerPrefs`, key `MagicBlock.HighScore`). Không lưu cài đặt, thống kê hay ván đang chơi | `GameManager.AddScore` |
+| 12 | Game Over | Thua khi: không block nào (trên tay + Storage nếu không bị khóa) đặt được **và** không End Turn được **và** không đang chọn buff **và** không còn consumable buff | `GameManager.Evaluate` |
+| 13 | Lưu tiến trình | Lưu High Score (`PlayerPrefs`, key `MagicBlock.HighScore.v2` — đổi key khi đổi cách tính điểm) và ngôn ngữ (key `MagicBlock.Language`, **đã chốt**). Không lưu thống kê hay ván đang chơi | `GameManager.AddScore`, `Localization.Set` |
+| 14 | Danh sách buff, độ hiếm, thông số | Tạm, người dùng duyệt dùng trước và sẽ chỉnh. Xem 3.5 | `BuffDefinitions.cs` |
+| 15 | Tỉ lệ độ hiếm theo May mắn | Tạm: May mắn 0 = 60/28/10/2 %; mỗi điểm May mắn chuyển 5% từ Common sang các độ cao hơn theo tỉ lệ gốc; Common tối thiểu 20%. Consumable không có Legendary → hạ xuống | `Buffs.BaseRarityOdds`, `BuffState.RarityOdds` |
+| 16 | Debuff màn thử thách | Tạm: 5 debuff, ngẫu nhiên 1, chỉ hiệu lực trong màn thử thách. Xem 3.6 | `Run/Debuffs.cs` |
 
 Quy tắc:
 
@@ -143,55 +150,75 @@ Ký hiệu: **[GDD]** = có trong GDD. **[Tạm]** = đang triển khai nhưng c
 - [GDD] Người chơi có thể lấy block trong Storage để dùng; slot được giải phóng khi lấy ra.
 - [GDD — đề xuất ban đầu] Sức chứa 5 slots; Expanded Storage +2 slots.
 
-### 3.4. Turn System
+### 3.4. Lượt chính và màn [Đã chốt — thay "Turn System" của GDD]
 
-- [GDD] Một turn: nhận 3 block → đặt block mới hoặc block từ Storage → có thể End Turn → block dư vào Storage → kiểm tra mốc buff → turn mới.
-- [Tạm] Turn Counter tăng khi dùng hết 3 block trên tay hoặc khi End Turn. Màn hình hiện “TURN n” với n = số turn đã hoàn thành + 1.
+- Một **màn** = nhận một nhóm block (3, hoặc 5 ở màn thử thách) → đặt block mới hoặc từ Storage → có thể End Turn → block dư vào Storage. Màn xong khi dùng hết block trên tay hoặc End Turn.
+- Một **lượt chính** = 10 màn. Xong màn 5: chọn buff vĩnh viễn. Màn 10 là thử thách (xem 3.6). Xong màn 10: thưởng 1 consumable ngẫu nhiên → chọn buff vĩnh viễn → dọn Storage (giữ số slot) → lượt kế tiếp.
+- Header hiện `lượt - màn` (ví dụ `1 - 7`) như TFT, kèm "Buff sau n màn" hoặc "THỬ THÁCH: tên debuff".
 
 ### 3.5. Buff System
 
 #### A. Consumable Buff — dùng một lần
 
-| Tên | Hiệu ứng [GDD] | Cách triển khai hiện tại [Tạm] |
-|---|---|---|
-| Block Destroyer | Xóa một block được chọn trên bảng | Chạm vào một ô có block → xóa toàn bộ phần còn lại của **block đã đặt** chứa ô đó (board lưu id cho mỗi lần đặt) |
-| Single Line Clear | Xóa một hàng hoặc cột được chọn | Nút MODE đổi hàng/cột, chạm bảng để xóa. Không cộng điểm. Hàng/cột trống thì không tiêu buff |
-| Block Reroll | Đổi nhóm block hiện tại thành nhóm mới | Chỉ đổi các block **còn trên tay**, giữ nguyên số lượng; không đụng Storage |
-| Storage Cleanup | Xóa một block trong Storage | Chạm vào block trong Storage để bỏ nó |
+**Đã chốt:** chỉ nhận ngẫu nhiên 1 cái khi qua màn thử thách (độ hiếm quay theo May mắn), không xuất hiện ở bảng chọn buff.
 
-- [GDD] Buff biến mất sau khi dùng; được tích trữ nếu chưa dùng.
+| Tên | Độ hiếm [Tạm] | Cách triển khai hiện tại [Tạm] |
+|---|---|---|
+| Block Destroyer (Phá Khối) | Common | Chạm vào một ô có block → xóa toàn bộ phần còn lại của **block đã đặt** chứa ô đó. Không dùng lên ô đá |
+| Single Line Clear (Xóa Hàng) | Rare | Nút MODE đổi hàng/cột, chạm bảng để xóa. Không cộng điểm. Hàng/cột trống thì không tiêu buff |
+| Block Reroll (Đổi Khối) | Uncommon | Chỉ đổi các block **còn trên tay**, giữ nguyên số lượng; không đụng Storage |
+| Storage Cleanup (Dọn Kho) | Common | Chạm vào block trong Storage để bỏ nó |
+
+- Buff biến mất sau khi dùng; được tích trữ nếu chưa dùng.
 - [Tạm] Không giới hạn số lượng tích trữ. Không dùng được consumable khi đang mở bảng chọn buff hoặc sau Game Over.
 
-#### B. Permanent Buff — duy trì đến Game Over
+#### B. Permanent Buff — duy trì đến Game Over [Tạm, người dùng sẽ chỉnh]
 
-| Tên | Hiệu ứng [GDD] | Thông số hiện tại [Tạm] |
+| Độ hiếm | Tên | Hiệu ứng |
 |---|---|---|
-| Expanded Storage | Tăng 2 slots Storage | +2 slots mỗi lần chọn |
-| Score Multiplier | Tăng điểm nhận được | +50% điểm **xóa hàng/cột** mỗi lần chọn (không nhân điểm đặt block) |
-| Combo Bonus | Tăng điểm khi xóa nhiều hàng/cột | +10 vào hệ số thưởng nhiều hàng mỗi lần chọn |
-| Lucky Blocks | Tăng cơ hội nhận block dễ đặt | Trọng số shape ≤ 3 ô nhân (1 + số lần chọn) |
-| Clear Bonus | Thưởng điểm sau mỗi lần xóa | +20 điểm mỗi lần xóa (mỗi lần đặt block có xóa) |
+| Common | Hệ Số + | Hệ số nhân +0.25 |
+| Common | Kho + | +1 slot Storage |
+| Common | May Mắn + | May mắn +1 |
+| Uncommon | Hệ Số ++ | Hệ số nhân +0.5 |
+| Uncommon | Mở Rộng Kho | +2 slot Storage |
+| Uncommon | Khối May Mắn | Trọng số shape ≤ 3 ô nhân (1 + số lần chọn) |
+| Rare | Hệ Số +++ | Hệ số nhân +1 |
+| Rare | Thưởng Combo | Xóa từ 2 đường trở lên cùng lúc: điểm lần đó × (1 + 0.5 × số lần chọn) |
+| Legendary | Nhân Đôi | Hệ số nhân ×2 mỗi lần chọn |
+| Legendary | Kho Lớn | +4 slot Storage |
 
-- [GDD] Có hiệu lực đến khi ván kết thúc, không cần kích hoạt thủ công.
-- [Tạm] Cộng dồn khi chọn trùng, không giới hạn. Thông số nằm ở đầu `Assets/MagicBlock/Scripts/Buffs/BuffDefinitions.cs`.
+- **Thuộc tính người chơi (đã chốt):** **Hệ số nhân** (ban đầu 1) = (1 + tổng các buff "Hệ Số +") × 2^(số lần Nhân Đôi). **May mắn** (ban đầu 0) tăng tỉ lệ buff hiếm (xem 2.3 mục 15). Cả hai chỉ tăng qua buff vĩnh viễn.
+- Cộng dồn khi chọn trùng, không giới hạn. Thông số nằm ở đầu `Assets/MagicBlock/Scripts/Buffs/BuffDefinitions.cs`.
+- Bảng chọn buff hiện độ hiếm bằng **chữ + màu** (THƯỜNG / KHÁ HIẾM / HIẾM / HUYỀN THOẠI).
 
-### 3.6. Win / Lose
+### 3.6. Win / Lose và màn thử thách
 
-- [GDD] Endless Mode, không có điều kiện chiến thắng cuối cùng.
-- [GDD] Game Over khi không còn nước đi hợp lệ với block hiện tại và Storage.
+- **Đã chốt:** chơi vô hạn, không có chiến thắng. Thua khi không còn nước đi hợp lệ.
 - [Tạm] Cách hiểu “không còn nước đi”: xem 2.3 mục 12. End Turn và consumable buff được tính là cách thoát kẹt.
-- Game Over hiện tổng điểm, High Score, số turn, số hàng/cột đã xóa, số block đã đặt và nút PLAY AGAIN.
+- **Màn thử thách (màn 10):** là màn thường nhưng khó hơn: 5 block và 1 debuff ngẫu nhiên [Tạm] trong số:
 
-### 3.7. Điểm số [Tạm]
+| Debuff | Hiệu ứng (chỉ trong màn thử thách) |
+|---|---|
+| Khối Khổng Lồ | Chỉ ra block từ 4 ô trở lên |
+| Khóa Kho | Không lấy được block từ Storage (vẫn dùng Dọn Kho được) |
+| Không Lùi Bước | Không được End Turn |
+| Điểm Giảm | Điểm × 0.5 |
+| Ô Đá | Đặt 3 ô đá vào ô trống ngẫu nhiên (không làm đầy hàng/cột). Đá bị xóa cùng hàng/cột khi đường đó đầy; Phá Khối không dùng lên đá được; đá còn lại vẫn nằm trên bảng sau màn thử thách. **Người dùng đã duyệt** thêm chướng ngại vật này |
 
-Với `cells` = số ô của block vừa đặt, `L` = số hàng + cột bị xóa trong lần đặt đó:
+- Game Over hiện tổng điểm, High Score, màn đạt được (`lượt - màn`), số hàng/cột đã xóa, số block đã đặt và nút CHƠI LẠI.
+
+### 3.7. Điểm số [Đã chốt]
+
+Với `r` = số hàng ngang, `c` = số cột dọc bị xóa trong một lần đặt, `N` = kích thước bảng (8):
 
 ```
-điểm = cells × 1
-     + (nếu L > 0) round( (10 × L + L × (L − 1) × (10 + ComboBonus)) × ScoreMultiplier ) + ClearBonus
+điểm = round( (N × r × r + N × c × c) × HệSốNhân × (nếu r + c ≥ 2: ComboFactor) × (debuff Điểm Giảm: 0.5) )
 ```
 
-Ví dụ khi chưa có buff: xóa 1 hàng = 10, 2 hàng = 40, 3 hàng = 90 (chưa tính điểm ô). Thông số nằm trong Inspector của `GameManager` (`pointsPerCell`, `pointsPerLine`, `multiLineBonusPerExtraLine`).
+- Số khối của các hàng ngang bị xóa × số hàng ngang, **cộng** số khối các cột dọc × số cột dọc. Ô giao giữa hàng và cột được tính ở cả hai phía.
+- Đặt block mà không xóa được gì: **0 điểm**.
+- Ví dụ (hệ số 1): 1 hàng = 8, 2 hàng = 32, 1 hàng + 1 cột = 16, 2 hàng + 1 cột = 40.
+- Công thức ở `Scoring/ScoreRules.cs`; hệ số combo/debuff đọc từ `BuffDefinitions.cs` / `Run/Debuffs.cs`.
 
 ---
 
@@ -204,13 +231,17 @@ Assets/MagicBlock/
   Art/            Sprite (ảnh trong thư mục này tự import thành Sprite)
     Tiles/        7 màu ô block
   Audio/          Âm thanh .ogg
-  Fonts/          Nunito-Black.ttf
+  Fonts/          Nunito-Black.ttf (có tiếng Việt) + Nunito-OFL.txt (license)
   Scenes/Game.unity   Scene chính (build index 0)
   Scripts/
-    Core/         ShapeLibrary.cs (Shape + thư viện hình), BoardModel.cs (Piece, lưới, đặt/xóa) — logic thuần, không dính UI
-    GameManager.cs            Luật chơi: Hand, Storage, End Turn, điểm, turn, Game Over, event
-    Buffs/        BuffDefinitions.cs (danh sách + thông số buff), GameManager.Buffs.cs (partial: chọn/dùng buff)
-    UI/           GameView.cs (dựng toàn bộ uGUI lúc chạy), GameView.Buffs.cs (partial: UI buff), PieceView.cs (kéo thả)
+    Core/         ShapeLibrary.cs (Shape + thư viện hình), BoardModel.cs (Piece, lưới, đặt/xóa, ô đá) — logic thuần, không dính UI
+    GameManager.cs            Điều phối: Hand, Storage, End Turn, luồng màn/lượt, áp debuff, Game Over, event
+    Scoring/      ScoreRules.cs (công thức điểm)
+    Run/          RunProgress.cs (đếm lượt - màn, mốc buff, màn thử thách), Debuffs.cs (debuff + thông số)
+    Buffs/        BuffDefinitions.cs (danh sách, độ hiếm, thông số, tỉ lệ), BuffState.cs (buff đang có, Hệ số nhân, May mắn, quay độ hiếm),
+                  GameManager.Buffs.cs (partial: chọn buff, thưởng, dùng consumable)
+    UI/           GameView.cs (dựng toàn bộ uGUI lúc chạy), GameView.Buffs.cs (partial: UI buff), PieceView.cs (kéo thả),
+                  Localization.cs (bảng chữ song ngữ VI/EN, tên + mô tả buff)
   Editor/         MagicBlockSceneBuilder.cs (menu MagicBlock → Build Game Scene), MagicBlockSpriteImporter.cs
 Asset/            (ngoài Unity, bị .gitignore) bản tách asset từ game khác, chỉ để tham khảo/lấy tạm
 ```
@@ -223,15 +254,18 @@ Asset/            (ngoài Unity, bị .gitignore) bản tách asset từ game kh
 
 | Hệ thống | Nằm ở đâu hiện tại |
 |---|---|
-| Game Controller, Turn, Storage, Score, Block Supply | `GameManager.cs` |
-| Board, Line Clear | `Core/BoardModel.cs` |
+| Game Controller, Storage, Block Supply, áp debuff | `GameManager.cs` |
+| Lượt chính / màn | `Run/RunProgress.cs` |
+| Debuff | `Run/Debuffs.cs` (áp dụng trong `GameManager`) |
+| Score | `Scoring/ScoreRules.cs` |
+| Board, Line Clear, ô đá | `Core/BoardModel.cs` |
 | Block (shape, trọng số) | `Core/ShapeLibrary.cs` |
-| Buff | `Buffs/BuffDefinitions.cs`, `Buffs/GameManager.Buffs.cs` |
-| UI | `UI/GameView.cs`, `UI/GameView.Buffs.cs`, `UI/PieceView.cs` |
-| Save | Chỉ High Score, trong `GameManager` |
+| Buff | `Buffs/BuffDefinitions.cs`, `Buffs/BuffState.cs`, `Buffs/GameManager.Buffs.cs` |
+| UI | `UI/GameView.cs`, `UI/GameView.Buffs.cs`, `UI/PieceView.cs`, `UI/Localization.cs` |
+| Save | High Score trong `GameManager`, ngôn ngữ trong `Localization` |
 
-- Logic (Core, GameManager) không tham chiếu UI. UI lắng nghe event của `GameManager`: `StateChanged`, `Placed`, `EndedTurn`, `BuffMilestoneReached`, `BuffChoiceOffered`, `BuffChosen`, `ConsumableUsed`, `GameEnded`.
-- **Nợ kỹ thuật đã biết:** `GameManager` đang gánh nhiều hệ thống (Turn, Storage, Score, Block Supply, Buff qua partial class). Điều này đi ngược nguyên tắc “không tạo Manager khổng lồ”. Có thể đề xuất tách (ví dụ Storage, Score, Buff thành class riêng) nhưng phải được duyệt trước khi refactor.
+- Logic (Core, Run, Scoring, Buffs, GameManager) không tham chiếu UI. UI lắng nghe event của `GameManager`: `StateChanged`, `Placed`, `EndedTurn`, `ChallengeStarted`, `StorageReset`, `BuffChoiceOffered`, `BuffChosen`, `ConsumableRewarded`, `ConsumableUsed`, `GameEnded`.
+- **Nợ kỹ thuật còn lại:** đã tách Score, Run, Buff state ra class riêng. `GameManager` vẫn giữ Storage, Block Supply và việc áp debuff; có thể tách tiếp nếu cần, phải được duyệt trước.
 
 ### 4.3. Nguyên tắc chung và mở rộng
 
@@ -240,7 +274,7 @@ Asset/            (ngoài Unity, bị .gitignore) bản tách asset từ game kh
 - Tránh phụ thuộc chéo không cần thiết giữa Board, Block, Storage, Turn và Buff.
 - Không tạo kiến trúc phức tạp vượt nhu cầu của game.
 - Thêm block shape mới: thêm một dòng `Add(...)` trong `ShapeLibrary.Build()`.
-- Thêm buff mới: thêm giá trị vào `BuffType`, thêm `BuffInfo` vào `Buffs.All` (đúng thứ tự enum), rồi thêm xử lý ở `GameManager.Buffs.cs` (và UI nếu là consumable cần chọn mục tiêu).
+- Thêm buff mới: thêm giá trị vào `BuffType`, thêm `BuffInfo` vào `Buffs.All` (đúng thứ tự enum), thêm 3 key `buff.<Type>.name/.short/.desc` (VI + EN) vào `Localization.cs`, rồi thêm xử lý ở `GameManager.Buffs.cs` (và UI nếu là consumable cần chọn mục tiêu).
 - Quy tắc tính điểm tập trung ở `GameManager.CalculatePoints`.
 - Không copy-paste cùng một logic xử lý ở nhiều nơi.
 - Chỉ áp dụng design pattern khi nó giải quyết vấn đề thực tế.
@@ -266,9 +300,9 @@ Asset/            (ngoài Unity, bị .gitignore) bản tách asset từ game kh
 
 Hiện cấu hình nằm ở:
 
-- Inspector của `GameManager`: kích thước board, số block mỗi nhóm, sức chứa Storage, mốc nhận buff, số buff mỗi lần chọn, số màu, điểm.
+- Inspector của `GameManager`: kích thước board, số block màn thường / màn thử thách, sức chứa Storage, số màn mỗi lượt, màn mốc buff, số buff mỗi lần chọn, số màu.
 - `ShapeLibrary.cs`: danh sách shape và trọng số.
-- `BuffDefinitions.cs`: danh sách buff, mô tả, thông số buff.
+- `BuffDefinitions.cs`: danh sách buff, độ hiếm, thông số buff, tỉ lệ độ hiếm theo May mắn. `Run/Debuffs.cs`: thông số debuff. Chữ hiển thị ở `UI/Localization.cs`.
 - Inspector của `GameView`: kích thước hiển thị, sprite, âm thanh.
 
 Chưa dùng ScriptableObject. Nếu muốn chuyển cấu hình sang ScriptableObject, phải đề xuất và chờ duyệt.
@@ -302,7 +336,7 @@ Chưa dùng ScriptableObject. Nếu muốn chuyển cấu hình sang ScriptableO
 ### 6.2. Buff UI
 
 - Hiển thị tên, biểu tượng và mô tả hiệu ứng của buff. **Hiện chưa có biểu tượng (icon)**, chỉ có tên, mô tả và nhãn.
-- Phân biệt rõ Consumable và Permanent: đã có nhãn chữ CONSUMABLE / PERMANENT kèm màu.
+- Phân biệt rõ Consumable và Permanent: đã có nhãn chữ DÙNG 1 LẦN / VĨNH VIỄN và tên độ hiếm, kèm màu theo độ hiếm.
 - Hiển thị buff dùng một lần còn lại (4 nút cạnh End Turn, có số lượng) và Permanent đang có hiệu lực (dòng chữ dưới BEST).
 - Không dùng màu sắc làm dấu hiệu duy nhất để phân biệt hai loại buff.
 
@@ -319,7 +353,9 @@ GDD chỉ xác định: Minimalist 2D Puzzle, Clean and colorful UI, Smooth anim
 
 ### 6.5. Asset tạm
 
-Ảnh, âm thanh và font trong `Assets/MagicBlock/Art`, `Audio`, `Fonts` được lấy từ thư mục `Asset/` — bản tách từ một game đã phát hành. Đây là asset tạm cho bài tập, **không phải tài sản của project** và phải thay trước khi phát hành. Repo đang để public nên các file này đang công khai; nhắc người dùng điều này khi bàn về phát hành hoặc chia sẻ. Không tự copy thêm asset từ `Asset/` khi chưa được đồng ý.
+Font Nunito-Black **không còn là asset tạm**: là bản cắt độ đậm 900 từ Nunito variable chính thức (github.com/google/fonts, license SIL OFL, kèm `Nunito-OFL.txt`).
+
+Ảnh và âm thanh trong `Assets/MagicBlock/Art`, `Audio` được lấy từ thư mục `Asset/` — bản tách từ một game đã phát hành. Đây là asset tạm cho bài tập, **không phải tài sản của project** và phải thay trước khi phát hành. Repo đang để public nên các file này đang công khai; nhắc người dùng điều này khi bàn về phát hành hoặc chia sẻ. Không tự copy thêm asset từ `Asset/` khi chưa được đồng ý.
 
 ---
 

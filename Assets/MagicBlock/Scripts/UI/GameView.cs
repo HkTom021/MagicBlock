@@ -42,7 +42,7 @@ namespace MagicBlock
         static readonly Color GhostColor = new(1f, 1f, 1f, 0.5f);
         static readonly Color WarnColor = new(1f, 0.65f, 0.2f);
         static readonly Color DangerColor = new(1f, 0.35f, 0.35f);
-        static readonly string[] Praise = { "Good!", "Great!", "Excellent!", "Amazing!", "Unbelievable!" };
+        const int PraiseCount = 5; // số key praise.N trong Localization
 
         public float BoardCellSize => boardCellSize;
         public float TileGapRatio => tileGapRatio;
@@ -52,12 +52,19 @@ namespace MagicBlock
 
         RectTransform _root, _board, _fxLayer, _storageRow;
         Image[,] _blockImages;
-        readonly RectTransform[] _handSlots = new RectTransform[3];
+        // Đủ chỗ cho màn thử thách (5 block); chỉ bật số slot bằng số block của màn hiện tại
+        const int MaxHandSlots = 5;
+        static readonly Color StoneColor = new(0.42f, 0.42f, 0.48f);
+        static readonly Color ChallengeColor = new(1f, 0.45f, 0.4f);
+        readonly RectTransform[] _handSlots = new RectTransform[MaxHandSlots];
         readonly List<RectTransform> _storageSlots = new();
         Text _scoreText, _bestText, _turnText, _buffText, _storageLabel, _hintText, _toastText;
         Button _endTurnButton;
         GameObject _gameOverPanel;
         Text _gameOverScore, _gameOverStats;
+        Text _langLabel;
+        // Chữ cố định (tiêu đề, nhãn nút) cần đặt lại khi đổi ngôn ngữ
+        readonly List<(Text text, string key)> _staticTexts = new();
         AudioSource _audio;
         float _shownScore;
         Coroutine _toastRoutine;
@@ -80,8 +87,10 @@ namespace MagicBlock
             game.StateChanged += Refresh;
             game.Placed += OnPlaced;
             game.EndedTurn += OnEndedTurn;
-            game.BuffMilestoneReached += OnBuffMilestone;
+            game.ChallengeStarted += OnChallengeStarted;
+            game.StorageReset += OnStorageReset;
             game.GameEnded += OnGameEnded;
+            Localization.LanguageChanged += OnLanguageChanged;
             SubscribeBuffs(true);
         }
 
@@ -90,9 +99,28 @@ namespace MagicBlock
             game.StateChanged -= Refresh;
             game.Placed -= OnPlaced;
             game.EndedTurn -= OnEndedTurn;
-            game.BuffMilestoneReached -= OnBuffMilestone;
+            game.ChallengeStarted -= OnChallengeStarted;
+            game.StorageReset -= OnStorageReset;
             game.GameEnded -= OnGameEnded;
+            Localization.LanguageChanged -= OnLanguageChanged;
             SubscribeBuffs(false);
+        }
+
+        /// <summary>Đổi ngôn ngữ giữa ván: chỉ vẽ lại chữ, không đụng trạng thái game.</summary>
+        void OnLanguageChanged()
+        {
+            foreach (var (text, key) in _staticTexts) text.text = Localization.T(key);
+            _langLabel.text = Localization.T("lang.button");
+            if (_buffPanel.activeSelf) FillBuffCards(game.BuffOptions);
+            if (game.IsGameOver) FillGameOverTexts();
+            Refresh();
+        }
+
+        Text Localized(Text text, string key)
+        {
+            _staticTexts.Add((text, key));
+            text.text = Localization.T(key);
+            return text;
         }
 
         void Update()
@@ -174,6 +202,17 @@ namespace MagicBlock
 
             _buffText = NewText("BuffProgress", _root, "", 34, new Color(0.75f, 0.9f, 1f), TextAnchor.MiddleRight);
             Place(_buffText.rectTransform, new Vector2(250, -135), new Vector2(480, 50));
+
+            // Nút đổi ngôn ngữ VI/EN, nằm giữa phía trên điểm số
+            var langButton = NewButton("LanguageButton", _root, "", new Color(1f, 1f, 1f, 0.18f), () =>
+            {
+                Play(sfxClick);
+                Localization.Toggle();
+            });
+            Place((RectTransform)langButton.transform, new Vector2(0, -50), new Vector2(120, 60));
+            _langLabel = langButton.GetComponentInChildren<Text>();
+            _langLabel.fontSize = 32;
+            _langLabel.text = Localization.T("lang.button");
         }
 
         void BuildBoard()
@@ -230,15 +269,16 @@ namespace MagicBlock
             for (int i = 0; i < _handSlots.Length; i++)
             {
                 var slot = NewRect($"HandSlot_{i}", _root);
-                Place(slot, new Vector2((i - 1) * 345f, top - 135f), new Vector2(330, 270));
+                Place(slot, new Vector2(0f, top - 135f), new Vector2(330, 270));
                 _handSlots[i] = slot;
+                slot.gameObject.SetActive(false);
             }
         }
 
         void BuildStorage()
         {
             float top = -260f - BoardSizePx - 330f;
-            _storageLabel = NewText("StorageLabel", _root, "STORAGE", 38, Color.white, TextAnchor.MiddleCenter);
+            _storageLabel = NewText("StorageLabel", _root, "", 38, Color.white, TextAnchor.MiddleCenter);
             Place(_storageLabel.rectTransform, new Vector2(0, top - 20f), new Vector2(800, 50));
             _storageRow = NewRect("StorageRow", _root);
             Place(_storageRow, new Vector2(0, top - 60f - storageSlotSize * 0.5f), new Vector2(1060, storageSlotSize));
@@ -267,11 +307,12 @@ namespace MagicBlock
         void BuildEndTurn()
         {
             float top = -260f - BoardSizePx - 330f - 60f - storageSlotSize - 30f;
-            _endTurnButton = NewButton("EndTurnButton", _root, "END TURN", new Color(0.95f, 0.45f, 0.25f), () =>
+            _endTurnButton = NewButton("EndTurnButton", _root, "", new Color(0.95f, 0.45f, 0.25f), () =>
             {
                 Play(sfxClick);
                 game.EndTurn();
             });
+            Localized(_endTurnButton.GetComponentInChildren<Text>(), "endTurn");
             Place((RectTransform)_endTurnButton.transform, new Vector2(0, top - 60f), new Vector2(360, 120));
 
             _hintText = NewText("Hint", _root, "", 34, WarnColor, TextAnchor.MiddleCenter);
@@ -286,20 +327,21 @@ namespace MagicBlock
             dim.color = new Color(0, 0, 0, 0.75f);
             _gameOverPanel = panel.gameObject;
 
-            var title = NewText("Title", panel, "GAME OVER", 110, Color.white, TextAnchor.MiddleCenter);
+            var title = Localized(NewText("Title", panel, "", 110, Color.white, TextAnchor.MiddleCenter), "gameOver.title");
             Place(title.rectTransform, new Vector2(0, 300), new Vector2(1000, 160), center: true);
             _gameOverScore = NewText("FinalScore", panel, "", 70, new Color(1f, 0.85f, 0.3f), TextAnchor.MiddleCenter);
             Place(_gameOverScore.rectTransform, new Vector2(0, 140), new Vector2(1000, 200), center: true);
             _gameOverStats = NewText("Stats", panel, "", 44, Color.white, TextAnchor.MiddleCenter);
             Place(_gameOverStats.rectTransform, new Vector2(0, -40), new Vector2(1000, 200), center: true);
 
-            var again = NewButton("PlayAgainButton", panel, "PLAY AGAIN", new Color(0.3f, 0.75f, 0.35f), () =>
+            var again = NewButton("PlayAgainButton", panel, "", new Color(0.3f, 0.75f, 0.35f), () =>
             {
                 Play(sfxClick);
                 _gameOverPanel.SetActive(false);
                 _shownScore = 0;
                 game.NewGame();
             });
+            Localized(again.GetComponentInChildren<Text>(), "gameOver.playAgain");
             Place((RectTransform)again.transform, new Vector2(0, -260), new Vector2(520, 140), center: true);
             _gameOverPanel.SetActive(false);
         }
@@ -313,20 +355,32 @@ namespace MagicBlock
             RefreshBoard();
             RebuildPieces();
 
-            _bestText.text = $"BEST {game.HighScore}";
-            _turnText.text = $"TURN {game.TurnsCompleted + 1}";
-            _buffText.text = $"Buff in {game.TurnsUntilBuff} turn{(game.TurnsUntilBuff == 1 ? "" : "s")}";
+            _bestText.text = Localization.T("best", game.HighScore);
+            _turnText.text = Localization.T("stage", game.Run.Round, game.Run.Stage);
+            if (game.ActiveDebuff is DebuffType debuff)
+            {
+                _turnText.color = ChallengeColor;
+                _buffText.text = Localization.T("challenge.header", Localization.DebuffName(debuff));
+                _buffText.color = ChallengeColor;
+            }
+            else
+            {
+                _turnText.color = Color.white;
+                int until = game.Run.StagesUntilBuff;
+                _buffText.text = until == 1 ? Localization.T("buffIn.one") : Localization.T("buffIn.many", until);
+                _buffText.color = new Color(0.75f, 0.9f, 1f);
+            }
 
             int used = game.Storage.Count, cap = game.StorageCapacity;
-            _storageLabel.text = $"STORAGE  {used}/{cap}";
+            _storageLabel.text = Localization.T(game.IsStorageLocked ? "storage.locked" : "storage", used, cap);
             _storageLabel.color = game.FreeStorageSlots == 0 ? DangerColor : game.FreeStorageSlots == 1 ? WarnColor : Color.white;
 
             _endTurnButton.interactable = game.CanEndTurn();
             int unused = game.UnusedHandCount();
             if (RefreshBuffUI()) { }
-            else if (game.IsStuck) { _hintText.text = game.CanEndTurn() ? "No space for any block - press END TURN!" : "No space - use a buff!"; _hintText.color = DangerColor; }
-            else if (unused > game.FreeStorageSlots) { _hintText.text = $"Storage needs {unused} free slots to End Turn"; _hintText.color = WarnColor; }
-            else if (game.FreeStorageSlots <= 1) { _hintText.text = "Storage almost full!"; _hintText.color = WarnColor; }
+            else if (game.IsStuck) { _hintText.text = Localization.T(game.CanEndTurn() ? "hint.stuckEndTurn" : "hint.stuckBuff"); _hintText.color = DangerColor; }
+            else if (unused > game.FreeStorageSlots) { _hintText.text = Localization.T("hint.storageNeeds", unused); _hintText.color = WarnColor; }
+            else if (game.FreeStorageSlots <= 1) { _hintText.text = Localization.T("hint.storageAlmost"); _hintText.color = WarnColor; }
             else _hintText.text = "";
         }
 
@@ -339,8 +393,9 @@ namespace MagicBlock
                 var img = _blockImages[x, y];
                 int c = game.Board.Get(x, y);
                 img.enabled = c != BoardModel.Empty;
-                if (img.enabled) img.sprite = TileSprite(c);
-                img.color = Color.white;
+                // Ô đá: ô xám trơn (không dùng sprite màu để khỏi nhầm với block)
+                if (img.enabled) img.sprite = c == BoardModel.Stone ? null : TileSprite(c);
+                img.color = c == BoardModel.Stone ? StoneColor : Color.white;
                 img.rectTransform.localScale = Vector3.one;
             }
         }
@@ -353,11 +408,24 @@ namespace MagicBlock
             foreach (var slot in _storageSlots)
                 for (int i = slot.childCount - 1; i >= 0; i--) Destroy(slot.GetChild(i).gameObject);
 
-            for (int i = 0; i < game.Hand.Length && i < _handSlots.Length; i++)
+            // Chia đều các slot trên tay theo số block của màn (3 thường, 5 ở màn thử thách)
+            int count = Mathf.Min(game.Hand.Length, _handSlots.Length);
+            if (game.Hand.Length > _handSlots.Length)
+                Debug.LogError($"[GameView] Hand có {game.Hand.Length} block nhưng UI chỉ có {_handSlots.Length} slot");
+            float spacing = 1035f / Mathf.Max(1, count);
+            float slotWidth = Mathf.Min(330f, spacing - 15f);
+            for (int i = 0; i < _handSlots.Length; i++)
             {
+                var slot = _handSlots[i];
+                bool used = i < count;
+                slot.gameObject.SetActive(used);
+                if (!used) continue;
+                slot.anchoredPosition = new Vector2((i - (count - 1) * 0.5f) * spacing, slot.anchoredPosition.y);
+                slot.sizeDelta = new Vector2(slotWidth, 270f);
                 var p = game.Hand[i];
                 if (p == null) continue;
-                CreatePieceView(p, PieceSource.Hand, i, _handSlots[i], handCellSize, _handSlots[i].sizeDelta);
+                float cell = Mathf.Min(handCellSize, (slotWidth - 16f) / Mathf.Max(p.Shape.Width, p.Shape.Height));
+                CreatePieceView(p, PieceSource.Hand, i, slot, cell, slot.sizeDelta);
             }
             for (int i = 0; i < game.Storage.Count && i < _storageSlots.Count; i++)
             {
@@ -372,7 +440,8 @@ namespace MagicBlock
         {
             var rt = NewRect($"Piece_{source}_{index}", slot);
             var view = rt.gameObject.AddComponent<PieceView>();
-            view.Init(this, p, source, index, cell, hitSize, !game.IsGameOver && game.CanPlaceAnywhere(p));
+            bool locked = source == PieceSource.Storage && game.IsStorageLocked;
+            view.Init(this, p, source, index, cell, hitSize, !game.IsGameOver && !locked && game.CanPlaceAnywhere(p));
         }
 
         // ================================================================ DRAG & DROP
@@ -452,27 +521,38 @@ namespace MagicBlock
                 float dist = Mathf.Abs(cell.X - (r.X + r.Piece.Shape.Width * 0.5f)) + Mathf.Abs(cell.Y - (r.Y + r.Piece.Shape.Height * 0.5f));
                 StartCoroutine(ClearFx(fx, img, dist * 0.025f));
             }
-            ShowToast($"{Praise[Mathf.Min(r.Lines - 1, Praise.Length - 1)]}\n+{r.Points}");
+            ShowToast($"{Localization.T($"praise.{Mathf.Min(r.Lines - 1, PraiseCount - 1)}")}\n+{r.Points}");
         }
 
         void OnEndedTurn(int moved)
         {
-            if (moved > 0) ShowToast($"{moved} block{(moved > 1 ? "s" : "")} to Storage", 64);
+            if (moved > 0) ShowToast(moved == 1 ? Localization.T("toast.toStorage.one") : Localization.T("toast.toStorage.many", moved), 64);
         }
 
-        void OnBuffMilestone(int turns)
+        void OnChallengeStarted(DebuffType debuff)
         {
-            // TODO: mở Buff Selection Panel ở bước tiếp theo
-            ShowToast("BUFF REWARD!\n", 90);
+            ShowToast(Localization.T("toast.challenge", Localization.DebuffName(debuff)), 72);
+        }
+
+        void OnStorageReset()
+        {
+            ShowToast(Localization.T("toast.storageReset"), 64);
         }
 
         void OnGameEnded()
         {
             Play(game.IsNewHighScore ? sfxNewHighScore : sfxGameOver);
             _shownScore = game.Score;
-            _gameOverScore.text = game.IsNewHighScore ? $"NEW HIGH SCORE!\n{game.Score}" : $"SCORE {game.Score}\nBEST {game.HighScore}";
-            _gameOverStats.text = $"Turns: {game.TurnsCompleted}   Lines: {game.TotalLinesCleared}\nBlocks placed: {game.BlocksPlaced}";
+            FillGameOverTexts();
             StartCoroutine(ShowGameOverDelayed());
+        }
+
+        void FillGameOverTexts()
+        {
+            _gameOverScore.text = game.IsNewHighScore
+                ? Localization.T("gameOver.newHigh", game.Score)
+                : Localization.T("gameOver.score", game.Score, game.HighScore);
+            _gameOverStats.text = Localization.T("gameOver.stats", game.Run.Round, game.Run.Stage, game.TotalLinesCleared, game.BlocksPlaced);
         }
 
         IEnumerator ShowGameOverDelayed()
@@ -515,13 +595,15 @@ namespace MagicBlock
             if (rt != null) rt.localScale = Vector3.one;
         }
 
-        static IEnumerator ClearFx(RectTransform rt, Image img, float delay)
+        static IEnumerator ClearFx(RectTransform rt, Image img, float delay) => ClearFx(rt, img, delay, Color.white);
+
+        static IEnumerator ClearFx(RectTransform rt, Image img, float delay, Color tint)
         {
             yield return new WaitForSeconds(delay);
             for (float t = 0; t < 1f; t += Time.deltaTime / 0.28f)
             {
                 rt.localScale = Vector3.one * Mathf.Lerp(1.1f, 0f, t * t);
-                img.color = new Color(1, 1, 1, 1f - t);
+                img.color = new Color(tint.r, tint.g, tint.b, 1f - t);
                 yield return null;
             }
             Destroy(rt.gameObject);

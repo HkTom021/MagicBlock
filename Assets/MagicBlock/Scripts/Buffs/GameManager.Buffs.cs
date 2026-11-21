@@ -4,71 +4,62 @@ using UnityEngine;
 
 namespace MagicBlock
 {
-    /// <summary>Phần Buff của GameManager: chọn buff ở mốc turn, kho consumable, hiệu ứng permanent.</summary>
+    /// <summary>Phần Buff của GameManager: chọn buff vĩnh viễn, thưởng consumable, dùng consumable.</summary>
     public sealed partial class GameManager
     {
         [Header("Buffs")]
-        [Tooltip("Số buff ngẫu nhiên đưa ra mỗi lần chọn")]
+        [Tooltip("Số buff vĩnh viễn đưa ra mỗi lần chọn")]
         [SerializeField] int buffChoices = 3;
 
-        readonly int[] _buffStacks = new int[Enum.GetValues(typeof(BuffType)).Length];
         readonly List<BuffType> _buffOptions = new();
         readonly List<ClearedCell> _buffCleared = new();
         readonly List<int> _tmpRows = new(), _tmpCols = new();
 
+        public BuffState BuffState { get; } = new();
+
         /// <summary>Đang hiện bảng chọn buff — khoá đặt block và End Turn.</summary>
         public bool IsChoosingBuff { get; private set; }
         public IReadOnlyList<BuffType> BuffOptions => _buffOptions;
-
-        // ---- Hiệu ứng permanent (tính từ số lần đã chọn) ----
-        public float ScoreMultiplier => 1f + Stacks(BuffType.ScoreMultiplier) * Buffs.ScoreMultiplierStep;
-        public int ExtraPointsPerClear => Stacks(BuffType.ClearBonus) * Buffs.ClearBonusStep;
-        public int ComboBonusExtra => Stacks(BuffType.ComboBonus) * Buffs.ComboBonusStep;
-        public float EasyBlockBonus => 1f + Stacks(BuffType.LuckyBlocks) * Buffs.LuckyBlocksStep;
+        /// <summary>Consumable vừa được thưởng ở màn thử thách gần nhất (để UI hiển thị); null nếu chưa có.</summary>
+        public BuffType? LastReward { get; private set; }
 
         public event Action<IReadOnlyList<BuffType>> BuffChoiceOffered;
         public event Action<BuffType> BuffChosen;
+        public event Action<BuffType> ConsumableRewarded;
         /// <summary>Consumable vừa dùng + các ô bị xoá trên bảng (để làm hiệu ứng).</summary>
         public event Action<BuffType, IReadOnlyList<ClearedCell>> ConsumableUsed;
 
-        /// <summary>Permanent: số lần đã chọn. Consumable: số lượng đang có.</summary>
-        public int Stacks(BuffType type) => _buffStacks[(int)type];
-
-        public int ConsumableCount()
-        {
-            int n = 0;
-            foreach (var t in Buffs.Consumables) n += Stacks(t);
-            return n;
-        }
+        public int Stacks(BuffType type) => BuffState.Stacks(type);
+        public int ConsumableCount() => BuffState.ConsumableCount();
 
         void ResetBuffs()
         {
-            Array.Clear(_buffStacks, 0, _buffStacks.Length);
+            BuffState.Reset();
             _buffOptions.Clear();
             IsChoosingBuff = false;
+            LastReward = null;
         }
 
         void OfferBuffChoice()
         {
-            _buffOptions.Clear();
-            var pool = new List<BuffType>();
-            foreach (var b in Buffs.All) pool.Add(b.Type);
-            for (int i = 0; i < buffChoices && pool.Count > 0; i++)
-            {
-                int k = _rng.Next(pool.Count);
-                _buffOptions.Add(pool[k]);
-                pool.RemoveAt(k);
-            }
+            BuffState.RollPermanentOptions(_rng, buffChoices, _buffOptions);
             IsChoosingBuff = _buffOptions.Count > 0;
             if (IsChoosingBuff) BuffChoiceOffered?.Invoke(_buffOptions);
+        }
+
+        void GrantChallengeReward()
+        {
+            var reward = BuffState.RollConsumable(_rng);
+            BuffState.Add(reward);
+            LastReward = reward;
+            ConsumableRewarded?.Invoke(reward);
         }
 
         public bool ChooseBuff(int optionIndex)
         {
             if (!IsChoosingBuff || optionIndex < 0 || optionIndex >= _buffOptions.Count) return false;
             var type = _buffOptions[optionIndex];
-            _buffStacks[(int)type]++;
-            if (type == BuffType.ExpandedStorage) storageCapacity += Buffs.ExpandedStorageSlots;
+            BuffState.Add(type);
             IsChoosingBuff = false;
             _buffOptions.Clear();
             BuffChosen?.Invoke(type);
@@ -80,21 +71,21 @@ namespace MagicBlock
 
         void Consume(BuffType type)
         {
-            _buffStacks[(int)type]--;
+            BuffState.TryConsume(type);
             ConsumableUsed?.Invoke(type, _buffCleared);
             Evaluate();
         }
 
-        /// <summary>Block Destroyer: xoá block (đã đặt) chứa ô (x,y).</summary>
+        /// <summary>Block Destroyer: xoá block (đã đặt) chứa ô (x,y). Không dùng được lên ô đá.</summary>
         public bool UseBlockDestroyer(int x, int y)
         {
-            if (!CanUse(BuffType.BlockDestroyer) || !Board.InBounds(x, y) || Board.IsEmpty(x, y)) return false;
+            if (!CanUse(BuffType.BlockDestroyer) || !Board.InBounds(x, y) || Board.IsEmpty(x, y) || Board.IsStone(x, y)) return false;
             Board.RemoveGroupAt(x, y, _buffCleared);
             Consume(BuffType.BlockDestroyer);
             return true;
         }
 
-        /// <summary>Single Line Clear: xoá hàng (isRow) hoặc cột chứa ô (x,y).</summary>
+        /// <summary>Single Line Clear: xoá hàng (isRow) hoặc cột chứa ô (x,y). Không cộng điểm.</summary>
         public bool UseLineClear(int x, int y, bool isRow)
         {
             if (!CanUse(BuffType.SingleLineClear) || !Board.InBounds(x, y)) return false;
@@ -111,8 +102,7 @@ namespace MagicBlock
         {
             if (!CanUse(BuffType.BlockReroll) || UnusedHandCount() == 0) return false;
             for (int i = 0; i < Hand.Length; i++)
-                if (Hand[i] != null)
-                    Hand[i] = new Piece(ShapeLibrary.Random(_rng, EasyBlockBonus), _rng.Next(colorCount));
+                if (Hand[i] != null) Hand[i] = NewPiece();
             _buffCleared.Clear();
             Consume(BuffType.BlockReroll);
             return true;

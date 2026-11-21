@@ -22,6 +22,8 @@ namespace MagicBlock
     public sealed class BoardModel
     {
         public const int Empty = -1;
+        /// <summary>Ô đá (debuff): chặn ô, không thuộc block nào, bị xoá cùng hàng/cột khi đường đó đầy.</summary>
+        public const int Stone = -2;
         public readonly int Size;
         readonly int[,] _cells;
 
@@ -51,7 +53,7 @@ namespace MagicBlock
         public void RemoveGroupAt(int x, int y, List<ClearedCell> cleared)
         {
             cleared.Clear();
-            if (!InBounds(x, y) || IsEmpty(x, y)) return;
+            if (!InBounds(x, y) || IsEmpty(x, y) || IsStone(x, y)) return;
             int id = _groups[x, y];
             for (int cx = 0; cx < Size; cx++)
                 for (int cy = 0; cy < Size; cy++)
@@ -60,6 +62,44 @@ namespace MagicBlock
 
         public int Get(int x, int y) => _cells[x, y];
         public bool IsEmpty(int x, int y) => _cells[x, y] == Empty;
+        public bool IsStone(int x, int y) => _cells[x, y] == Stone;
+
+        /// <summary>
+        /// Đặt tối đa <paramref name="count"/> ô đá vào ô trống ngẫu nhiên. Bỏ qua ô nào sẽ làm đầy
+        /// một hàng/cột (tránh đá tự tạo ra đường đầy). Trả về số ô đá đã đặt.
+        /// </summary>
+        public int PlaceStones(int count, System.Random rng)
+        {
+            var empties = new List<Vector2Int>();
+            for (int x = 0; x < Size; x++)
+                for (int y = 0; y < Size; y++)
+                    if (IsEmpty(x, y)) empties.Add(new Vector2Int(x, y));
+
+            int placed = 0;
+            while (placed < count && empties.Count > 0)
+            {
+                int k = rng.Next(empties.Count);
+                var p = empties[k];
+                empties.RemoveAt(k);
+                _cells[p.x, p.y] = Stone;
+                if (IsRowFull(p.y) || IsColFull(p.x)) { _cells[p.x, p.y] = Empty; continue; }
+                _groups[p.x, p.y] = 0;
+                placed++;
+            }
+            return placed;
+        }
+
+        bool IsRowFull(int y)
+        {
+            for (int x = 0; x < Size; x++) if (IsEmpty(x, y)) return false;
+            return true;
+        }
+
+        bool IsColFull(int x)
+        {
+            for (int y = 0; y < Size; y++) if (IsEmpty(x, y)) return false;
+            return true;
+        }
         public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Size && y < Size;
 
         public bool CanPlace(Shape shape, int ox, int oy)
@@ -93,18 +133,8 @@ namespace MagicBlock
         public void FindFullLines(List<int> rows, List<int> cols)
         {
             rows.Clear(); cols.Clear();
-            for (int y = 0; y < Size; y++)
-            {
-                bool full = true;
-                for (int x = 0; x < Size && full; x++) full = !IsEmpty(x, y);
-                if (full) rows.Add(y);
-            }
-            for (int x = 0; x < Size; x++)
-            {
-                bool full = true;
-                for (int y = 0; y < Size && full; y++) full = !IsEmpty(x, y);
-                if (full) cols.Add(x);
-            }
+            for (int y = 0; y < Size; y++) if (IsRowFull(y)) rows.Add(y);
+            for (int x = 0; x < Size; x++) if (IsColFull(x)) cols.Add(x);
         }
 
         /// <summary>Xoá các hàng/cột, trả về danh sách ô bị xoá (không trùng).</summary>

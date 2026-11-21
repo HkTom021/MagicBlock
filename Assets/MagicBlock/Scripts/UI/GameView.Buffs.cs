@@ -12,9 +12,21 @@ namespace MagicBlock
         enum TargetMode { None, Destroy, Line, StorageCleanup }
 
         static readonly Color ConsumableColor = new(0.15f, 0.70f, 0.75f);
-        static readonly Color PermanentColor = new(0.62f, 0.35f, 0.90f);
         static readonly Color CardColor = new(0.10f, 0.14f, 0.32f, 0.97f);
         static readonly Color TargetSlotColor = new(1f, 0.85f, 0.3f, 0.45f);
+        // Màu theo độ hiếm; luôn đi kèm chữ tên độ hiếm, không dùng màu làm dấu hiệu duy nhất
+        static readonly Color[] RarityColors =
+        {
+            new(0.80f, 0.84f, 0.90f), // Common
+            new(0.35f, 0.85f, 0.45f), // Uncommon
+            new(0.35f, 0.65f, 1.00f), // Rare
+            new(1.00f, 0.75f, 0.20f), // Legendary
+        };
+
+        public static Color RarityColor(Rarity r) => RarityColors[(int)r];
+
+        Text _rewardText;
+        BuffType? _pendingReward;
 
         TargetMode _targeting = TargetMode.None;
         bool _lineIsRow = true;
@@ -39,12 +51,14 @@ namespace MagicBlock
                 game.BuffChoiceOffered += OnBuffChoiceOffered;
                 game.BuffChosen += OnBuffChosen;
                 game.ConsumableUsed += OnConsumableUsed;
+                game.ConsumableRewarded += OnConsumableRewarded;
             }
             else
             {
                 game.BuffChoiceOffered -= OnBuffChoiceOffered;
                 game.BuffChosen -= OnBuffChosen;
                 game.ConsumableUsed -= OnConsumableUsed;
+                game.ConsumableRewarded -= OnConsumableRewarded;
             }
         }
 
@@ -73,7 +87,7 @@ namespace MagicBlock
             }
 
             // Thanh điều khiển khi đang chọn mục tiêu
-            _lineModeButton = NewButton("LineModeButton", _root, "ROW", ConsumableColor, () =>
+            _lineModeButton = NewButton("LineModeButton", _root, "", ConsumableColor, () =>
             {
                 Play(sfxClick);
                 _lineIsRow = !_lineIsRow;
@@ -82,11 +96,12 @@ namespace MagicBlock
             Place((RectTransform)_lineModeButton.transform, new Vector2(-200, y), new Vector2(340, 120));
             _lineModeLabel = _lineModeButton.GetComponentInChildren<Text>();
 
-            _cancelButton = NewButton("CancelBuffButton", _root, "CANCEL", new Color(0.55f, 0.55f, 0.6f), () =>
+            _cancelButton = NewButton("CancelBuffButton", _root, "", new Color(0.55f, 0.55f, 0.6f), () =>
             {
                 Play(sfxClick);
                 SetTargeting(TargetMode.None);
             });
+            Localized(_cancelButton.GetComponentInChildren<Text>(), "cancel");
             Place((RectTransform)_cancelButton.transform, new Vector2(200, y), new Vector2(340, 120));
         }
 
@@ -97,9 +112,14 @@ namespace MagicBlock
             panel.gameObject.AddComponent<Image>().color = new Color(0, 0, 0, 0.8f);
             _buffPanel = panel.gameObject;
 
-            var title = NewText("Title", panel, "CHOOSE A BUFF", 90, new Color(1f, 0.85f, 0.3f), TextAnchor.MiddleCenter);
+            var title = NewText("Title", panel, "", 90, new Color(1f, 0.85f, 0.3f), TextAnchor.MiddleCenter);
             Place(title.rectTransform, new Vector2(0, 560), new Vector2(1000, 140), center: true);
             title.gameObject.AddComponent<Outline>().effectDistance = new Vector2(3, -3);
+            Localized(title, "buffPanel.title");
+
+            // Dòng báo buff dùng-một-lần vừa được thưởng sau màn thử thách
+            _rewardText = NewText("Reward", panel, "", 40, new Color(0.6f, 1f, 0.95f), TextAnchor.MiddleCenter);
+            Place(_rewardText.rectTransform, new Vector2(0, 475), new Vector2(1000, 60), center: true);
 
             for (int i = 0; i < 3; i++)
             {
@@ -152,12 +172,12 @@ namespace MagicBlock
                 var btn = _consumableButtons[type];
                 btn.gameObject.SetActive(!targeting);
                 btn.interactable = count > 0 && CanInteract;
-                _consumableLabels[type].text = $"{Buffs.Get(type).ShortName}\nx{count}";
+                _consumableLabels[type].text = $"{Localization.BuffShortName(type)}\nx{count}";
             }
             _endTurnButton.gameObject.SetActive(!targeting);
             _cancelButton.gameObject.SetActive(targeting);
             _lineModeButton.gameObject.SetActive(_targeting == TargetMode.Line);
-            _lineModeLabel.text = _lineIsRow ? "MODE: ROW" : "MODE: COLUMN";
+            _lineModeLabel.text = Localization.T(_lineIsRow ? "lineMode.row" : "lineMode.column");
 
             _perksText.text = PerksSummary();
 
@@ -172,9 +192,9 @@ namespace MagicBlock
             _hintText.color = new Color(1f, 0.85f, 0.3f);
             _hintText.text = _targeting switch
             {
-                TargetMode.Destroy => "Tap a block on the board to destroy it",
-                TargetMode.Line => _lineIsRow ? "Tap the board to clear that ROW" : "Tap the board to clear that COLUMN",
-                TargetMode.StorageCleanup => "Tap a block in Storage to remove it",
+                TargetMode.Destroy => Localization.T("hint.tapDestroy"),
+                TargetMode.Line => Localization.T(_lineIsRow ? "hint.tapRow" : "hint.tapColumn"),
+                TargetMode.StorageCleanup => Localization.T("hint.tapStorage"),
                 _ => "",
             };
             return true;
@@ -182,12 +202,16 @@ namespace MagicBlock
 
         string PerksSummary()
         {
-            var parts = new List<string>();
-            if (game.Stacks(BuffType.ScoreMultiplier) > 0) parts.Add($"Score x{game.ScoreMultiplier:0.#}");
-            if (game.Stacks(BuffType.ClearBonus) > 0) parts.Add($"Clear +{game.ExtraPointsPerClear}");
-            if (game.Stacks(BuffType.ComboBonus) > 0) parts.Add($"Combo +{game.ComboBonusExtra}");
-            if (game.Stacks(BuffType.LuckyBlocks) > 0) parts.Add($"Lucky x{game.EasyBlockBonus:0.#}");
-            if (game.Stacks(BuffType.ExpandedStorage) > 0) parts.Add($"Storage +{game.Stacks(BuffType.ExpandedStorage) * Buffs.ExpandedStorageSlots}");
+            // Hệ số nhân và May mắn luôn hiện vì là chỉ số chính của người chơi
+            var s = game.BuffState;
+            var parts = new List<string>
+            {
+                Localization.T("perk.multiplier", s.Multiplier.ToString("0.##")),
+                Localization.T("perk.luck", s.Luck),
+            };
+            if (s.StorageBonus > 0) parts.Add(Localization.T("perk.storage", s.StorageBonus));
+            if (game.Stacks(BuffType.ComboBonus) > 0) parts.Add(Localization.T("perk.combo", s.ComboFactor.ToString("0.#")));
+            if (game.Stacks(BuffType.LuckyBlocks) > 0) parts.Add(Localization.T("perk.easy", s.EasyBlockBonus.ToString("0.#")));
             return string.Join("  ", parts);
         }
 
@@ -200,12 +224,12 @@ namespace MagicBlock
             switch (type)
             {
                 case BuffType.BlockReroll:
-                    if (!game.UseReroll()) ShowToast("Nothing to reroll", 60);
+                    if (!game.UseReroll()) ShowToast(Localization.T("toast.nothingReroll"), 60);
                     break;
                 case BuffType.BlockDestroyer: SetTargeting(TargetMode.Destroy); break;
                 case BuffType.SingleLineClear: SetTargeting(TargetMode.Line); break;
                 case BuffType.StorageCleanup:
-                    if (game.Storage.Count == 0) ShowToast("Storage is empty", 60);
+                    if (game.Storage.Count == 0) ShowToast(Localization.T("toast.storageEmpty"), 60);
                     else SetTargeting(TargetMode.StorageCleanup);
                     break;
             }
@@ -228,7 +252,7 @@ namespace MagicBlock
             if (!game.Board.InBounds(x, y)) return;
 
             bool ok = _targeting == TargetMode.Destroy ? game.UseBlockDestroyer(x, y) : game.UseLineClear(x, y, _lineIsRow);
-            if (!ok) ShowToast(_targeting == TargetMode.Destroy ? "Tap a filled cell" : "That line is empty", 60);
+            if (!ok) ShowToast(Localization.T(_targeting == TargetMode.Destroy ? "toast.tapFilled" : "toast.lineEmpty"), 60);
         }
 
         public void OnPieceClicked(PieceView piece)
@@ -248,23 +272,39 @@ namespace MagicBlock
         void OnBuffChoiceOffered(IReadOnlyList<BuffType> options)
         {
             _targeting = TargetMode.None;
+            FillBuffCards(options);
+            if (_showPanelRoutine != null) StopCoroutine(_showPanelRoutine);
+            _showPanelRoutine = StartCoroutine(ShowBuffPanel());
+        }
+
+        void FillBuffCards(IReadOnlyList<BuffType> options)
+        {
             for (int i = 0; i < _buffCards.Count; i++)
             {
                 bool has = i < options.Count;
                 _buffCards[i].gameObject.SetActive(has);
                 if (!has) continue;
                 var info = Buffs.Get(options[i]);
-                var color = info.IsConsumable ? ConsumableColor : PermanentColor;
+                var color = RarityColor(info.Rarity);
                 _cardStripes[i].color = color;
-                _cardNames[i].text = info.Name;
-                _cardTags[i].text = info.IsConsumable ? "CONSUMABLE" : "PERMANENT";
+                _cardNames[i].text = Localization.BuffName(info.Type);
+                _cardTags[i].text = $"{Localization.RarityName(info.Rarity)} · {Localization.T(info.IsConsumable ? "buffTag.consumable" : "buffTag.permanent")}";
                 _cardTags[i].color = color;
-                _cardDescs[i].text = info.Description;
+                _cardDescs[i].text = Localization.BuffDescription(info.Type);
                 int owned = game.Stacks(info.Type);
-                _cardOwned[i].text = owned > 0 ? (info.IsConsumable ? $"You have {owned}" : $"Owned x{owned}") : "";
+                _cardOwned[i].text = owned > 0
+                    ? Localization.T(info.IsConsumable ? "buffOwned.consumable" : "buffOwned.permanent", owned)
+                    : "";
             }
-            if (_showPanelRoutine != null) StopCoroutine(_showPanelRoutine);
-            _showPanelRoutine = StartCoroutine(ShowBuffPanel());
+            _rewardText.text = _pendingReward is BuffType reward
+                ? Localization.T("buffPanel.reward", Localization.BuffName(reward), Localization.RarityName(Buffs.Get(reward).Rarity))
+                : "";
+        }
+
+        void OnConsumableRewarded(BuffType type)
+        {
+            // Được gọi ngay trước khi bảng chọn buff mở -> hiện trên bảng thay vì toast bị che
+            _pendingReward = type;
         }
 
         IEnumerator ShowBuffPanel()
@@ -285,8 +325,9 @@ namespace MagicBlock
         {
             if (_showPanelRoutine != null) StopCoroutine(_showPanelRoutine);
             _buffPanel.SetActive(false);
+            _pendingReward = null;
             Play(sfxNewHighScore != null ? sfxNewHighScore : sfxClick);
-            ShowToast($"{Buffs.Get(type).Name}!", 72);
+            ShowToast($"{Localization.BuffName(type)}!", 72);
         }
 
         void OnConsumableUsed(BuffType type, IReadOnlyList<ClearedCell> cleared)
@@ -305,13 +346,14 @@ namespace MagicBlock
                     fx.anchoredPosition = boardCenter + CellLocalPosition(cell.X, cell.Y, n);
                     fx.sizeDelta = new Vector2(tile, tile);
                     var img = fx.gameObject.AddComponent<Image>();
-                    img.sprite = TileSprite(cell.Color);
+                    bool stone = cell.Color == BoardModel.Stone;
+                    img.sprite = stone ? null : TileSprite(cell.Color);
                     img.raycastTarget = false;
-                    StartCoroutine(ClearFx(fx, img, 0f));
+                    StartCoroutine(ClearFx(fx, img, 0f, stone ? StoneColor : Color.white));
                 }
             }
             else Play(sfxClick);
-            ShowToast(Buffs.Get(type).Name, 64);
+            ShowToast(Localization.BuffName(type), 64);
         }
     }
 

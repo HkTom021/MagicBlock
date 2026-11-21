@@ -93,17 +93,26 @@ namespace MagicBlock
         }
 
         /// <summary>Random theo trọng số. easyBonus &gt; 1 tăng tỉ lệ ra block dễ (Lucky Blocks).</summary>
-        public static Shape Random(System.Random rng, float easyBonus = 1f)
+        /// <param name="minCells">Chỉ lấy shape có ít nhất bấy nhiêu ô (debuff Khối Khổng Lồ). 0 = không giới hạn.</param>
+        public static Shape Random(System.Random rng, float easyBonus = 1f, int minCells = 0)
         {
             float total = 0f;
-            foreach (var s in All) total += s.Weight * (s.IsEasy ? easyBonus : 1f);
+            foreach (var s in All) total += WeightOf(s, easyBonus, minCells);
+            if (total <= 0f) throw new System.InvalidOperationException($"Không có shape nào có từ {minCells} ô trở lên");
             double roll = rng.NextDouble() * total;
+            Shape last = null;
             foreach (var s in All)
             {
-                roll -= s.Weight * (s.IsEasy ? easyBonus : 1f);
+                float w = WeightOf(s, easyBonus, minCells);
+                if (w <= 0f) continue;
+                last = s;
+                roll -= w;
                 if (roll <= 0) return s;
             }
-            return All[All.Count - 1];
+            return last;
         }
+
+        static float WeightOf(Shape s, float easyBonus, int minCells) =>
+            s.CellCount < minCells ? 0f : s.Weight * (s.IsEasy ? easyBonus : 1f);
     }
 }
